@@ -8,6 +8,7 @@ import eu.europa.ec.itb.validation.commons.config.WebDomainConfig;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The configuration for a specific validation domain.
@@ -27,6 +28,36 @@ public class DomainConfig extends WebDomainConfig {
     private String queryContentType;
     private boolean returnMessagesForAllLocales;
     private Map<String, ErrorResponseTypeEnum> importedShapeErrorResponse;
+    private Set<String> urisToIgnoreForImportErrors;
+    private Set<String> urisToSkipWhenImporting;
+
+    /**
+     * @return The URIs to ignore for import errors.
+     */
+    public Set<String> getUrisToIgnoreForImportErrors() {
+        return urisToIgnoreForImportErrors;
+    }
+
+    /**
+     * @param urisToIgnoreForImportErrors The URIs to ignore for import errors.
+     */
+    public void setUrisToIgnoreForImportErrors(Set<String> urisToIgnoreForImportErrors) {
+        this.urisToIgnoreForImportErrors = urisToIgnoreForImportErrors;
+    }
+
+    /**
+     * @return The URIs that should be skipped when found in owl:imports.
+     */
+    public Set<String> getUrisToSkipWhenImporting() {
+        return urisToSkipWhenImporting;
+    }
+
+    /**
+     * @param urisToSkipWhenImporting The URIs that should be skipped when found in owl:imports.
+     */
+    public void setUrisToSkipWhenImporting(Set<String> urisToSkipWhenImporting) {
+        this.urisToSkipWhenImporting = urisToSkipWhenImporting;
+    }
 
     /**
      * Check how to react to a failure when loading shapes imported via owl:imports.

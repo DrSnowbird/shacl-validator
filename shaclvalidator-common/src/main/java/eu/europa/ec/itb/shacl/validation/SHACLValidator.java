@@ -5,7 +5,9 @@ import com.gitb.tr.TestAssertionReportType;
 import com.gitb.vs.ValidateRequest;
 import com.gitb.vs.ValidationResponse;
 import eu.europa.ec.itb.shacl.DomainConfig;
+import eu.europa.ec.itb.shacl.ExtendedValidatorException;
 import eu.europa.ec.itb.shacl.ModelPair;
+import eu.europa.ec.itb.shacl.config.CustomLocatorHTTP;
 import eu.europa.ec.itb.shacl.util.StatementTranslator;
 import eu.europa.ec.itb.validation.commons.FileInfo;
 import eu.europa.ec.itb.validation.commons.LocalisationHelper;
@@ -17,6 +19,7 @@ import eu.europa.ec.itb.validation.plugin.PluginManager;
 import eu.europa.ec.itb.validation.plugin.ValidationPlugin;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.jena.ontology.OntDocumentManager;
 import org.apache.jena.ontology.OntModel;
 import org.apache.jena.ontology.OntModelSpec;
@@ -38,6 +41,7 @@ import org.topbraid.shacl.validation.ValidationUtil;
 import javax.xml.bind.JAXBElement;
 import java.io.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static eu.europa.ec.itb.shacl.validation.SHACLResources.VALIDATION_REPORT;
 
@@ -53,7 +57,6 @@ public class SHACLValidator {
     /** The URI for result message predicates. */
     public static final String RESULT_MESSAGE_URI = "http://www.w3.org/ns/shacl#resultMessage";
     private static final Logger LOG = LoggerFactory.getLogger(SHACLValidator.class);
-    private static final ThreadLocal<Set<String>> importsResultingInErrors = new ThreadLocal<>();
 
     @Autowired
     private FileManager fileManager = null;
@@ -74,7 +77,8 @@ public class SHACLValidator {
     private Model importedShapes;
     private final boolean loadImports;
     private Model dataModel;
-    private boolean errorsWhileLoadingOwlImports = false;
+    private final List<String> errorsWhileLoadingOwlImports = new ArrayList<>();
+    private boolean errorsWhileLoadingOwlImportsToReport = false;
 
     /**
      * Constructor to start the SHACL validator.
@@ -381,21 +385,31 @@ public class SHACLValidator {
         spec.setBaseModelMaker(modelMaker);
         spec.setImportModelMaker(modelMaker);
 
-        importsResultingInErrors.set(new HashSet<>());
-        OntDocumentManager.getInstance().setReadFailureHandler((url, model, e) -> {
-            LOG.warn("Failed to load import [{}]: {}", url, e.getMessage());
-            // Use a thread local because this is a shared default instance.
-            importsResultingInErrors.get().add(url);
-        });
-        OntModel baseOntModel = ModelFactory.createOntologyModel(spec, aggregateModel);
-        addIncluded(baseOntModel, reachedURIs);
-        var importsWithErrors = importsResultingInErrors.get();
-        importsResultingInErrors.remove();
+        CustomLocatorHTTP.URIS_TO_SKIP.set(domainConfig.getUrisToSkipWhenImporting());
+        CustomReadFailureHandler.IMPORTS_WITH_ERRORS.set(new LinkedHashSet<>());
+        Set<Pair<String, String>> importsWithErrors;
+        try {
+            OntModel baseOntModel = ModelFactory.createOntologyModel(spec, aggregateModel);
+            addIncluded(baseOntModel, reachedURIs);
+            importsWithErrors = CustomReadFailureHandler.IMPORTS_WITH_ERRORS.get();
+        } finally {
+            CustomReadFailureHandler.IMPORTS_WITH_ERRORS.remove();
+            CustomLocatorHTTP.URIS_TO_SKIP.remove();
+        }
+
         if (!importsWithErrors.isEmpty()) {
-            errorsWhileLoadingOwlImports = true;
             // Make sure the relevant models are closed, otherwise they are cached and don't result in additional failures, nor retries.
-            importsWithErrors.forEach((uri) -> {
-                var model = OntDocumentManager.getInstance().getModel(uri);
+            var informationMessages = new ArrayList<String>();
+            for (var errorInfo: importsWithErrors) {
+                if (!domainConfig.getUrisToSkipWhenImporting().contains(errorInfo.getKey())) {
+                    LOG.warn("Failed to load import [{}]: {}", errorInfo.getKey(), errorInfo.getValue());
+                    informationMessages.add(String.format("URI [%s] produced error [%s]", errorInfo.getKey(), errorInfo.getValue()));
+                    if (!domainConfig.getUrisToIgnoreForImportErrors().contains(errorInfo.getKey())) {
+                        errorsWhileLoadingOwlImportsToReport = true;
+                    }
+                }
+                // Close the relevant model so that we don't cache an error response.
+                var model = OntDocumentManager.getInstance().getModel(errorInfo.getKey());
                 if (model != null && !model.isClosed()) {
                     try {
                         model.close();
@@ -403,17 +417,32 @@ public class SHACLValidator {
                         // Ignore.
                     }
                 }
-            });
-            if (domainConfig.getResponseForImportedShapeFailure(validationType) == ErrorResponseTypeEnum.FAIL) {
-                throw new ValidatorException("validator.label.exception.failureToLoadRemoteArtefactsError");
+            }
+            errorsWhileLoadingOwlImports.addAll(informationMessages);
+            if (errorsWhileLoadingOwlImportsToReport && domainConfig.getResponseForImportedShapeFailure(validationType) == ErrorResponseTypeEnum.FAIL) {
+                throw new ExtendedValidatorException("validator.label.exception.failureToLoadRemoteArtefactsError", informationMessages);
             }
         }
+    }
+
+    /**
+     * @return Whether errors were recorded while loading owl:imports that must be reported.
+     */
+    public boolean hasErrorsWhileLoadingOwlImportsToReport() {
+        return errorsWhileLoadingOwlImportsToReport;
     }
 
     /**
      * @return Whether errors were recorded while loading owl:imports.
      */
     public boolean hasErrorsDuringOwlImports() {
+        return !errorsWhileLoadingOwlImports.isEmpty();
+    }
+
+    /**
+     * @return The list of produced errors while loading owl:imports.
+     */
+    public List<String> getErrorsWhileLoadingOwlImports() {
         return errorsWhileLoadingOwlImports;
     }
 
