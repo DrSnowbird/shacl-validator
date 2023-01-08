@@ -27,6 +27,10 @@ import static org.apache.jena.http.HttpEnv.httpClientBuilder;
  * of failures during the loading of remote resources. The problem was due to the reuse of a static HTTP client that if
  * not closed correctly resulted in blocked threads. This replacement implementation replicates the steps taken but
  * ensures that a fresh HTTP client instance is constructed for each request.
+ *
+ * In addition, this implementation follows deep redirects whereby a URI results in a 301 and then another 30X that leads
+ * again to a 301. In the JDK's HTTP client followed redirects stop if another 301 is encountered. The current implementation
+ * detects such cases and keeps on following redirects as long as there is no redirect loop.
  */
 public class CustomLocatorHTTP extends LocatorHTTP {
 
@@ -69,6 +73,9 @@ public class CustomLocatorHTTP extends LocatorHTTP {
                         response = client.send(toRequest(uriToUse), HttpResponse.BodyHandlers.ofInputStream());
                         if (response.statusCode() >= 300 && response.statusCode() <= 399) {
                             var nextLocation = response.headers().firstValue("Location");
+                            if (nextLocation.isEmpty()) {
+                                nextLocation = response.headers().firstValue("location");
+                            }
                             if (nextLocation.isPresent()) {
                                 uriToUse = nextLocation.get();
                             }
@@ -88,6 +95,11 @@ public class CustomLocatorHTTP extends LocatorHTTP {
             }
         }
         return result;
+    }
+
+    @Override
+    public String getName() {
+        return "CustomLocatorHTTP" ;
     }
 
 }
