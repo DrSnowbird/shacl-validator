@@ -18,7 +18,6 @@ import eu.europa.ec.itb.validation.commons.web.KeyWithLabel;
 import eu.europa.ec.itb.validation.commons.web.locale.CustomLocaleResolver;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFLanguages;
 import org.slf4j.Logger;
@@ -210,7 +209,9 @@ public class UploadController extends BaseUploadController<DomainConfig, DomainC
                             if (noContentSyntaxProvided) {
                                 contentSyntaxType = getExtensionContentTypeForFileName(file.getOriginalFilename());
                             }
-                            inputFile = fileManager.getFileFromInputStream(parentFolder, file.getInputStream(), contentSyntaxType, FILE_NAME_INPUT);
+                            try (var stream = file.getInputStream()) {
+                                inputFile = fileManager.getFileFromInputStream(parentFolder, stream, contentSyntaxType, FILE_NAME_INPUT);
+                            }
                             break;
                         case CONTENT_TYPE_URI:
                             if (noContentSyntaxProvided) {
@@ -237,7 +238,7 @@ public class UploadController extends BaseUploadController<DomainConfig, DomainC
                 SHACLValidator validator = ctx.getBean(SHACLValidator.class, inputFile, validationType, contentSyntaxType, userProvidedShapes, loadImportsValue, domainConfig, localisationHelper);
                 ModelPair models = validator.validateAll();
                 ReportPair tarReport = ShaclValidatorUtils.getTAR(ReportSpecs
-                        .builder(models.getInputModel(), models.getReportModel(), localisationHelper, domainConfig)
+                        .builder(models.getInputModel(), models.getReportModel(), localisationHelper, domainConfig, validator.getValidationType())
                         .produceAggregateReport()
                         .build()
                 );
@@ -498,7 +499,9 @@ public class UploadController extends BaseUploadController<DomainConfig, DomainC
                         if (StringUtils.isEmpty(contentSyntaxType) || contentSyntaxType.equals(EMPTY)) {
                             contentSyntaxType = getExtensionContentTypeForFileName(externalFiles[i].getOriginalFilename());
                         }
-                        inputFile = this.fileManager.getFileFromInputStream(parentFolder, externalFiles[i].getInputStream(), contentSyntaxType, null);
+                        try (var stream = externalFiles[i].getInputStream()) {
+                            inputFile = this.fileManager.getFileFromInputStream(parentFolder, stream, contentSyntaxType, null);
+                        }
                     }
                 } else if (CONTENT_TYPE_URI.equals(externalContentType[i]) && externalUri.length > i && !externalUri[i].isEmpty()) {
                     if (StringUtils.isEmpty(contentSyntaxType) || contentSyntaxType.equals(EMPTY)) {
